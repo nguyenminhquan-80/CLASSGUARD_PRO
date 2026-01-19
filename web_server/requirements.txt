@@ -1,3 +1,4 @@
+# web_server/requirements.txt
 Flask==2.3.3
 Werkzeug==2.3.7
 Flask-Login==0.6.2
@@ -6,8 +7,15 @@ paho-mqtt==1.6.1
 psycopg2-binary==2.9.9
 gunicorn==21.2.0
 reportlab==4.0.4
-matplotlib==3.7.3
-numpy==1.24.3
-pandas==2.0.3
+
+# Cập nhật matplotlib và numpy lên phiên bản hỗ trợ Python 3.13 tốt hơn
+matplotlib==3.8.0
+numpy==1.26.0
+
+pandas==2.1.3
 python-dotenv==1.0.0
 greenlet==3.0.3
+
+# QUAN TRỌNG: Thêm các gói build tool cần thiết
+setuptools==69.0.2
+wheel==0.42.0
