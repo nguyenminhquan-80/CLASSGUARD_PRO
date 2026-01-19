@@ -1,0 +1,19 @@
+services:
+  - type: web
+    name: classguard-pro
+    env: python
+    region: singapore
+    plan: free
+    buildCommand: |
+      cd web_server
+      pip install -r requirements.txt
+    startCommand: |
+      cd web_server
+      gunicorn app:app
+    envVars:
+      - key: SECRET_KEY
+        generateValue: true
+      - key: MQTT_BROKER
+        value: broker.hivemq.com
+      - key: MQTT_PORT
+        value: 1883

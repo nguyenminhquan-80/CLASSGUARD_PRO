@@ -1,0 +1,6 @@
+esp32_code/
+database/
+*.log
+__pycache__/
+*.pyc
+.DS_Store
