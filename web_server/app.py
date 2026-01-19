@@ -1,149 +1,64 @@
-# app.py - Optimized for Render.com
-import sys
-import os
-sys.path.append(os.path.dirname(os.path.abspath(__file__)))
-import json
-from datetime import datetime, timedelta
-from flask import Flask, render_template, jsonify, request, send_file, redirect, url_for, flash
+from flask import Flask, render_template, request, jsonify, send_file, redirect, url_for, session
 from flask_sqlalchemy import SQLAlchemy
-from flask_login import LoginManager, UserMixin, login_user, logout_user, login_required, current_user
-from werkzeug.security import generate_password_hash, check_password_hash
-import paho.mqtt.client as mqtt
-from io import BytesIO
-import matplotlib
-matplotlib.use('Agg')
+from flask_login import LoginManager, UserMixin, login_user, login_required, logout_user, current_user
+import pandas as pd
 import matplotlib.pyplot as plt
-from reportlab.lib.pagesizes import letter
-from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph
-from reportlab.lib.styles import getSampleStyleSheet
-from reportlab.lib import colors
-if __name__ != '__main__':
-    from models import db, User, SensorData
-else:
-    from .models import db, User, SensorData
-    
-# Initialize Flask
+import matplotlib
+matplotlib.use('Agg')  # Không cần GUI
+from datetime import datetime
+import io
+from reportlab.pdfgen import canvas
+from reportlab.lib.pagesizes import A4
+import requests
+import json
+import os
+
 app = Flask(__name__)
-app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'dev-secret-key')
-app.config['SQLALCHEMY_DATABASE_URI'] = os.environ.get('DATABASE_URL', 'sqlite:///classguard.db').replace('postgres://', 'postgresql://')
+app.config['SECRET_KEY'] = 'your-secret-key-here-change-this'
+app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///classguard.db'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
-# Database
 db = SQLAlchemy(app)
-
-# Login Manager
 login_manager = LoginManager()
 login_manager.init_app(app)
 login_manager.login_view = 'login'
 
-# MQTT Configuration
-MQTT_BROKER = os.environ.get('MQTT_BROKER', 'broker.hivemq.com')
-MQTT_PORT = int(os.environ.get('MQTT_PORT', 1883))
-MQTT_TOPIC_SENSORS = "classguard/sensors"
-MQTT_TOPIC_CONTROL = "classguard/control"
-
-# Global variables
-latest_data = {}
-device_status = {'fan': False, 'light': False, 'buzzer': False}
-
-# Database Models
+# ================== MÔ HÌNH DỮ LIỆU ==================
 class User(UserMixin, db.Model):
     id = db.Column(db.Integer, primary_key=True)
     username = db.Column(db.String(80), unique=True, nullable=False)
-    password_hash = db.Column(db.String(200), nullable=False)
-    role = db.Column(db.String(20), default='viewer')
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
-
-    def set_password(self, password):
-        self.password_hash = generate_password_hash(password)
-
-    def check_password(self, password):
-        return check_password_hash(self.password_hash, password)
+    password = db.Column(db.String(120), nullable=False)
+    role = db.Column(db.String(20), default='viewer')  # 'admin' hoặc 'viewer'
 
 class SensorData(db.Model):
     id = db.Column(db.Integer, primary_key=True)
+    timestamp = db.Column(db.DateTime, default=datetime.utcnow)
     temperature = db.Column(db.Float)
     humidity = db.Column(db.Float)
-    co2 = db.Column(db.Float)
     light = db.Column(db.Float)
-    noise = db.Column(db.Float)
-    score = db.Column(db.Integer)
-    status = db.Column(db.String(50))
-    timestamp = db.Column(db.DateTime, default=datetime.utcnow)
+    air_quality = db.Column(db.Float)
+    sound_level = db.Column(db.Float)
+    evaluation = db.Column(db.String(50))
+    device_ip = db.Column(db.String(50))
 
 @login_manager.user_loader
 def load_user(user_id):
     return User.query.get(int(user_id))
 
-# Initialize MQTT (non-blocking)
-def init_mqtt():
-    client = mqtt.Client()
-    
-    def on_connect(client, userdata, flags, rc):
-        if rc == 0:
-            print("✓ MQTT Connected")
-            client.subscribe(MQTT_TOPIC_SENSORS)
-        else:
-            print(f"✗ MQTT Connection failed: {rc}")
-    
-    def on_message(client, userdata, msg):
-        try:
-            data = json.loads(msg.payload.decode())
-            global latest_data
-            latest_data = data
-            latest_data['received_at'] = datetime.now().isoformat()
-            
-            # Save to database
-            sensor = SensorData(
-                temperature=data.get('temperature'),
-                humidity=data.get('humidity'),
-                co2=data.get('co2'),
-                light=data.get('light'),
-                noise=data.get('noise'),
-                score=data.get('class_score', 0),
-                status=data.get('status', 'Unknown')
-            )
-            db.session.add(sensor)
-            db.session.commit()
-            
-        except Exception as e:
-            print(f"MQTT Error: {e}")
-    
-    client.on_connect = on_connect
-    client.on_message = on_message
-    
-    try:
-        client.connect(MQTT_BROKER, MQTT_PORT, 60)
-        client.loop_start()
-        return client
-    except:
-        print("MQTT broker not available, continuing without MQTT")
-        return None
-
-# Initialize MQTT client
-mqtt_client = init_mqtt()
-
-# Routes
-@app.route('/')
-@login_required
-def index():
-    return redirect(url_for('dashboard'))
-
+# ================== TRANG ĐĂNG NHẬP ==================
 @app.route('/login', methods=['GET', 'POST'])
 def login():
-    if current_user.is_authenticated:
-        return redirect(url_for('dashboard'))
-    
     if request.method == 'POST':
         username = request.form['username']
         password = request.form['password']
+        
         user = User.query.filter_by(username=username).first()
         
-        if user and user.check_password(password):
+        if user and user.password == password:
             login_user(user)
             return redirect(url_for('dashboard'))
         else:
-            flash('Invalid credentials', 'error')
+            return render_template('login.html', error='Sai tên đăng nhập hoặc mật khẩu')
     
     return render_template('login.html')
 
@@ -153,119 +68,190 @@ def logout():
     logout_user()
     return redirect(url_for('login'))
 
-@app.route('/dashboard')
+# ================== TRANG CHỦ ==================
+@app.route('/')
 @login_required
 def dashboard():
-    latest = SensorData.query.order_by(SensorData.timestamp.desc()).first()
-    
-    # Get chart data (last 1 hour)
-    hour_ago = datetime.utcnow() - timedelta(hours=1)
-    records = SensorData.query.filter(SensorData.timestamp >= hour_ago).order_by(SensorData.timestamp).all()
-    
-    chart_data = {
-        'times': [r.timestamp.strftime('%H:%M') for r in records[-12:]],
-        'temp': [r.temperature for r in records[-12:] if r.temperature],
-        'co2': [r.co2 for r in records[-12:] if r.co2],
-        'light': [r.light for r in records[-12:] if r.light],
-        'noise': [r.noise for r in records[-12:] if r.noise]
-    }
-    
-    return render_template('dashboard.html', 
-                         latest=latest, 
-                         status=device_status,
-                         chart_data=json.dumps(chart_data),
-                         user=current_user)
+    return render_template('dashboard.html', user=current_user)
 
+# ================== API LẤY DỮ LIỆU ==================
 @app.route('/api/data')
 @login_required
-def api_data():
-    return jsonify(latest_data)
+def get_data():
+    # Lấy dữ liệu từ ESP32 (thay IP bằng IP thật của ESP32)
+    try:
+        esp_ip = request.args.get('esp_ip', '192.168.1.100')
+        response = requests.get(f'http://{esp_ip}/data', timeout=5)
+        data = response.json()
+        
+        # Lưu vào database
+        sensor_data = SensorData(
+            temperature=data['temperature'],
+            humidity=data['humidity'],
+            light=data['light'],
+            air_quality=data['air_quality'],
+            sound_level=data['sound_level'],
+            evaluation=data['evaluation'],
+            device_ip=esp_ip
+        )
+        db.session.add(sensor_data)
+        db.session.commit()
+        
+        return jsonify(data)
+    except:
+        # Nếu không kết nối được ESP32, trả về dữ liệu mẫu
+        return jsonify({
+            'temperature': 25.5,
+            'humidity': 65.2,
+            'light': 450.0,
+            'air_quality': 350.0,
+            'sound_level': 55.0,
+            'evaluation': 'Tốt',
+            'led_state': True,
+            'fan_state': False,
+            'auto_mode': True
+        })
 
+# ================== API ĐIỀU KHIỂN ==================
 @app.route('/api/control', methods=['POST'])
 @login_required
-def api_control():
+def control_device():
     if current_user.role != 'admin':
-        return jsonify({'error': 'Unauthorized'}), 403
+        return jsonify({'error': 'Không có quyền'}), 403
     
     data = request.json
+    esp_ip = data.get('esp_ip', '192.168.1.100')
     device = data.get('device')
-    state = data.get('state')
+    action = data.get('action')
     
-    if device in device_status:
-        device_status[device] = state
-        if mqtt_client:
-            mqtt_client.publish(MQTT_TOPIC_CONTROL, json.dumps({device: state}))
-        return jsonify({'success': True})
-    
-    return jsonify({'error': 'Invalid device'}), 400
+    try:
+        response = requests.get(f'http://{esp_ip}/control?device={device}&action={action}', timeout=5)
+        return jsonify({'message': 'Thành công', 'response': response.text})
+    except:
+        return jsonify({'error': 'Không thể kết nối đến thiết bị'}), 500
 
+# ================== LỊCH SỬ DỮ LIỆU ==================
 @app.route('/history')
 @login_required
 def history():
     page = request.args.get('page', 1, type=int)
-    data = SensorData.query.order_by(SensorData.timestamp.desc()).paginate(page=page, per_page=20)
-    return render_template('history.html', data=data)
+    per_page = 50
+    
+    # Lọc dữ liệu
+    device_ip = request.args.get('device_ip', '')
+    start_date = request.args.get('start_date', '')
+    end_date = request.args.get('end_date', '')
+    
+    query = SensorData.query
+    
+    if device_ip:
+        query = query.filter_by(device_ip=device_ip)
+    
+    if start_date:
+        try:
+            start = datetime.strptime(start_date, '%Y-%m-%d')
+            query = query.filter(SensorData.timestamp >= start)
+        except:
+            pass
+    
+    if end_date:
+        try:
+            end = datetime.strptime(end_date, '%Y-%m-%d')
+            query = query.filter(SensorData.timestamp <= end)
+        except:
+            pass
+    
+    data = query.order_by(SensorData.timestamp.desc()).paginate(page=page, per_page=per_page)
+    
+    return render_template('history.html', data=data, user=current_user)
 
+# ================== XUẤT PDF ==================
 @app.route('/export/pdf')
 @login_required
 def export_pdf():
-    # Simple PDF export
-    buffer = BytesIO()
-    doc = SimpleDocTemplate(buffer, pagesize=letter)
-    elements = []
+    # Tạo file PDF
+    buffer = io.BytesIO()
+    p = canvas.Canvas(buffer, pagesize=A4)
+    width, height = A4
     
-    styles = getSampleStyleSheet()
-    elements.append(Paragraph("CLASSGUARD Report", styles['Title']))
+    # Tiêu đề
+    p.setFont("Helvetica-Bold", 16)
+    p.drawString(50, height - 50, "BÁO CÁO CLASSGUARD")
+    p.setFont("Helvetica", 12)
+    p.drawString(50, height - 80, f"Ngày xuất: {datetime.now().strftime('%d/%m/%Y %H:%M')}")
     
-    # Add table
-    data = [['Time', 'Temp', 'Humidity', 'CO2', 'Score']]
-    records = SensorData.query.order_by(SensorData.timestamp.desc()).limit(20).all()
+    # Lấy dữ liệu gần nhất
+    latest_data = SensorData.query.order_by(SensorData.timestamp.desc()).first()
     
-    for r in records:
-        data.append([
-            r.timestamp.strftime('%H:%M'),
-            f"{r.temperature:.1f}" if r.temperature else 'N/A',
-            f"{r.humidity:.1f}" if r.humidity else 'N/A',
-            f"{r.co2:.0f}" if r.co2 else 'N/A',
-            str(r.score) if r.score else 'N/A'
-        ])
+    if latest_data:
+        y = height - 120
+        p.drawString(50, y, f"Nhiệt độ: {latest_data.temperature}°C")
+        y -= 25
+        p.drawString(50, y, f"Độ ẩm: {latest_data.humidity}%")
+        y -= 25
+        p.drawString(50, y, f"Ánh sáng: {latest_data.light} lux")
+        y -= 25
+        p.drawString(50, y, f"Chất lượng không khí: {latest_data.air_quality} ppm")
+        y -= 25
+        p.drawString(50, y, f"Mức âm thanh: {latest_data.sound_level} dB")
+        y -= 25
+        p.drawString(50, y, f"Đánh giá: {latest_data.evaluation}")
     
-    table = Table(data)
-    table.setStyle(TableStyle([
-        ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
-        ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
-        ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
-        ('GRID', (0, 0), (-1, -1), 1, colors.black)
-    ]))
-    
-    elements.append(table)
-    doc.build(elements)
+    p.save()
     buffer.seek(0)
     
-    return send_file(buffer, mimetype='application/pdf',
-                     download_name=f'report_{datetime.now().strftime("%Y%m%d")}.pdf')
+    return send_file(buffer, as_attachment=True, download_name='classguard_report.pdf', mimetype='application/pdf')
 
-@app.route('/init')
-def init_db():
-    # Create default users
-    if not User.query.first():
-        admin = User(username='admin', role='admin')
-        admin.set_password('admin123')
-        
-        viewer = User(username='viewer', role='viewer')
-        viewer.set_password('viewer123')
-        
-        db.session.add(admin)
-        db.session.add(viewer)
-        db.session.commit()
-        
-        return 'Database initialized with admin/viewer users'
-    return 'Database already initialized'
+# ================== QUẢN LÝ NGƯỜI DÙNG (chỉ admin) ==================
+@app.route('/admin/users')
+@login_required
+def manage_users():
+    if current_user.role != 'admin':
+        return redirect(url_for('dashboard'))
+    
+    users = User.query.all()
+    return render_template('users.html', users=users, user=current_user)
 
-# Create database tables
-with app.app_context():
+# ================== TẠO DỮ LIỆU MẪU ==================
+def create_sample_data():
+    # Xóa database cũ
+    db.drop_all()
     db.create_all()
+    
+    # Tạo user admin và viewer
+    admin = User(username='admin', password='admin123', role='admin')
+    viewer = User(username='xem', password='xem123', role='viewer')
+    db.session.add(admin)
+    db.session.add(viewer)
+    
+    # Tạo dữ liệu cảm biến mẫu
+    import random
+    from datetime import datetime, timedelta
+    
+    for i in range(100):
+        timestamp = datetime.utcnow() - timedelta(hours=i)
+        data = SensorData(
+            timestamp=timestamp,
+            temperature=random.uniform(20, 30),
+            humidity=random.uniform(40, 80),
+            light=random.uniform(200, 800),
+            air_quality=random.uniform(200, 1000),
+            sound_level=random.uniform(40, 90),
+            evaluation=random.choice(['Xuất sắc', 'Tốt', 'Khá', 'Trung bình']),
+            device_ip='192.168.1.100'
+        )
+        db.session.add(data)
+    
+    db.session.commit()
+    print("Đã tạo dữ liệu mẫu!")
 
+# ================== CHẠY ỨNG DỤNG ==================
 if __name__ == '__main__':
-    port = int(os.environ.get('PORT', 5000))
+    with app.app_context():
+        db.create_all()
+        # Chỉ chạy dòng dưới lần đầu để tạo dữ liệu mẫu
+        # create_sample_data()
+    
+    # Lấy port từ biến môi trường (cho fly.io)
+    port = int(os.environ.get('PORT', 8080))
     app.run(host='0.0.0.0', port=port)

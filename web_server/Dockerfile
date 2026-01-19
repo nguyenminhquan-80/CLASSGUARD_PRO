@@ -1,24 +1,21 @@
-FROM python:3.11-slim
+# Sử dụng Python 3.9
+FROM python:3.9-slim
 
-WORKDIR /app
-
-# Install system dependencies
+# Cài đặt các phụ thuộc hệ thống
 RUN apt-get update && apt-get install -y \
     gcc \
     g++ \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy requirements
+# Tạo thư mục làm việc
+WORKDIR /app
+
+# Sao chép requirements và cài đặt
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy application
+# Sao chép toàn bộ mã nguồn
 COPY . .
 
-# Create non-root user
-RUN useradd -m -u 1000 flyuser && chown -R flyuser:flyuser /app
-USER flyuser
-
-# Run application
-EXPOSE 8080
-CMD ["gunicorn", "--bind", "0.0.0.0:8080", "app:app"]
+# Chạy ứng dụng
+CMD ["gunicorn", "--bind", "0.0.0.0:8080", "--workers", "2", "app:app"]
