@@ -1,4 +1,4 @@
-# web_server/requirements.txt
+# Sử dụng phiên bản ổn định với Python 3.11
 Flask==2.3.3
 Werkzeug==2.3.7
 Flask-Login==0.6.2
@@ -7,16 +7,8 @@ paho-mqtt==1.6.1
 psycopg2-binary==2.9.9
 gunicorn==21.2.0
 reportlab==4.0.4
-
-# Cập nhật lên phiên bản hỗ trợ Python 3.13
-matplotlib==3.8.0
-numpy==2.0.0  # Phiên bản mới hỗ trợ Python 3.13
-
-pandas==2.2.0  # Cập nhật để tương thích với numpy 2.0.0
+matplotlib==3.7.3
+numpy==1.24.3  # Phiên bản ổn định với Python 3.11
+pandas==2.0.3
 python-dotenv==1.0.0
 greenlet==3.0.3
-
-# Các gói build tool
-setuptools==69.0.2
-wheel==0.42.0
-pip==24.0  # Cố định phiên bản pip để tránh lỗi
